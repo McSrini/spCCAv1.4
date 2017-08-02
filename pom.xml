@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>ca.mcmaster</groupId>
+    <artifactId>spCCAv1.4</artifactId>
+    <version>1.0</version>
+    <packaging>jar</packaging>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+    </properties>
+    
+    <dependencies>     
+      
+            
+            	        
+            <dependency> <!-- Spark dependency -->
+                  <groupId>org.apache.spark</groupId>
+                  <artifactId>spark-core_2.10</artifactId>
+                  <version>1.6.1</version>
+                  <type>jar</type>
+                  <scope>provided</scope>
+            </dependency>
+            
+            <dependency>
+                  <groupId>log4j</groupId>
+                  <artifactId>log4j</artifactId>
+                  <version>1.2.17</version>
+            </dependency>
+	        
+            <dependency>
+                  <groupId>com.ibm</groupId>
+                  <artifactId>cplex</artifactId>
+                  <version>12.6.1</version>
+            </dependency>
+            
+            
+    </dependencies>   
+        
+    <repositories>
+              <repository>
+                      <id>erlocal</id>
+                      <url>http://localhost:8081/artifactory/ext-release-local</url>                    
+              </repository>
+              
+    </repositories>
+</project>
