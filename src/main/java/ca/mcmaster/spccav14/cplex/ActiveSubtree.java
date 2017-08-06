@@ -217,7 +217,56 @@ public class ActiveSubtree {
         return this.cplex.getStatus().toString();
     }
     
-   
+    public List<CCANode> getActiveLeafsAsCCANodes (List<String> wantedLeafNodeIDs) {
+        List <CCANode> ccaNodeList = new ArrayList <CCANode> ();
+        
+        for (NodeAttachment leaf : this.allActiveLeafs) {
+            if (wantedLeafNodeIDs!=null && !wantedLeafNodeIDs.contains( leaf.nodeID))continue ;
+            CCANode ccaNode = new CCANode();   
+            leaf.ccaInformation=ccaNode;
+            leaf.ccaInformation.nodeID= leaf.nodeID;
+            getBranchingInstructionForCCANode( leaf);
+                        
+            getCCANodeLPRelaxValue(leaf);
+            
+            //populate CCA node with best-estimate and sum-of-infeasibilities
+            //this is not done non-leaf regular CCA nodes
+            ccaNode.sumOfIntegerInfeasibilities = leaf.sumOfIntegerInfeasibilities;
+            ccaNode.bestEstimateValue= leaf.bestEstimateValue;
+            logger.debug(" cca node properties for round robin LP BE SI "+ ccaNode.lpRelaxationValue + ", "+ 
+                         ccaNode.bestEstimateValue + ", "+ccaNode.sumOfIntegerInfeasibilities );
+            
+            ccaNodeList.add( ccaNode);
+        }
+        
+        return ccaNodeList;
+    }
+    
+    public static void getCCANodeLPRelaxValue (NodeAttachment node ) {
+        node.ccaInformation.lpRelaxationValue=  node.estimatedLPRelaxationValue;
+    }
+    
+    //climb up all the way to root
+    public static void getBranchingInstructionForCCANode (NodeAttachment node ){
+        
+        NodeAttachment thisNode = node;
+        NodeAttachment parent = node.parentData;
+        while (parent !=null){
+            
+            if (parent.rightChildRef!=null && parent.rightChildNodeID.equals( thisNode.nodeID)) {
+                //must be right child
+                 
+                node.ccaInformation.branchingInstructionList.add( parent.getBranchingInstructionForRightChild()) ;
+            } else {
+                //must be the left child
+                 
+                node.ccaInformation.branchingInstructionList.add(parent.getBranchingInstructionForLeftChild()) ;
+            }
+            
+            thisNode = parent;
+            parent = parent.parentData;
+        }
+    }
         
     //create sub problem by changing var bounds
     public void mergeVarBounds (CCANode ccaNode, List<BranchingInstruction> instructionsFromOriginalMip ) throws IloException {
@@ -233,6 +282,12 @@ public class ActiveSubtree {
         Map< String, Double >   lowerBounds= getLowerBounds(cumulativeInstructions, ccaNode.nodeID);
         Map< String, Double >   upperBounds= getUpperBounds(cumulativeInstructions, ccaNode.nodeID);
         CplexUtilities.merge(cplex, lowerBounds, upperBounds);
+    }
+    
+        
+    public double getBestRemaining_LPValue() throws IloException{
+        return this.cplex.getBestObjValue();
+        //return this.allActiveLeafs==null? this.lpRelaxValueAfterCCAMerge: this.branchHandler.bestReamining_LPValue;
     }
     
 }

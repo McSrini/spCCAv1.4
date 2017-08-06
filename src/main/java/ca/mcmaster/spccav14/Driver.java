@@ -39,26 +39,26 @@ public class Driver {
         SparkConf conf = new SparkConf().setAppName("SparcPlex CCA V1.4");
         JavaSparkContext sc = new JavaSparkContext(conf);
         
-        //CCA ramp up is done on partition 0, CB on partition 1 , and so on
+        // ramp up is done on partition 0 
         List<Tuple2<Integer, Boolean>> initialListCCA = new ArrayList<Tuple2<Integer, Boolean>> () ;
         for (int index = ZERO; index < NUM_PARTITIONS; index ++) {
             initialListCCA.add( new Tuple2<Integer, Boolean> (index, index == ZERO));
         }
         List<Tuple2<Integer, Boolean>> initialListCB = new ArrayList<Tuple2<Integer, Boolean>> () ;
         for (int index = ZERO; index < NUM_PARTITIONS; index ++) {
-            initialListCB.add( new Tuple2<Integer, Boolean> (index, index == ONE));
+            initialListCB.add( new Tuple2<Integer, Boolean> (index, index == ZERO));
         }
         List<Tuple2<Integer, Boolean>> initialListLSI = new ArrayList<Tuple2<Integer, Boolean>> () ;
         for (int index = ZERO; index < NUM_PARTITIONS; index ++) {
-            initialListLSI.add( new Tuple2<Integer, Boolean> (index, index == TWO));
+            initialListLSI.add( new Tuple2<Integer, Boolean> (index, index == ZERO));
         }
         List<Tuple2<Integer, Boolean>> initialListSBF = new ArrayList<Tuple2<Integer, Boolean>> () ;
         for (int index = ZERO; index < NUM_PARTITIONS; index ++) {
-            initialListSBF.add( new Tuple2<Integer, Boolean> (index, index == THREE));
+            initialListSBF.add( new Tuple2<Integer, Boolean> (index, index == ZERO));
         }
         List<Tuple2<Integer, Boolean>> initialListBEF = new ArrayList<Tuple2<Integer, Boolean>> () ;
         for (int index = ZERO; index < NUM_PARTITIONS; index ++) {
-            initialListBEF.add( new Tuple2<Integer, Boolean> (index, index == FOUR));
+            initialListBEF.add( new Tuple2<Integer, Boolean> (index, index == ZERO));
         }
         
          //create the active subtrees which will be ramped up
@@ -227,11 +227,18 @@ public class Driver {
         //
         //get CCA condidates
         List<CCANode> candidateCCANodes = frontierCCA.mapValues( new CCACandidatesGenerator()).values().reduce( new ListSizeComparer3());
+        
         //accept good candidates
         int NUM_CCA_NODES_ACCEPTED_FOR_MIGRATION=ZERO;
         List<CCANode> acceptedCCANodes = new ArrayList<CCANode> ();
         //each accepted CCA node results in some leafs being pruned from the source tree
         List<String> pruneList = new ArrayList<String>();
+        // we convert each accepted CCA node into an active subtree collection, for use in the second part of the test
+        List<ActiveSubtreeCollection> activeSubtreeCollectionListSBF = new ArrayList<ActiveSubtreeCollection>();
+        List<ActiveSubtreeCollection> activeSubtreeCollectionListBEF = new ArrayList<ActiveSubtreeCollection>();
+        List<ActiveSubtreeCollection> activeSubtreeCollectionListLSI = new ArrayList<ActiveSubtreeCollection>();
+        
+        
         for (CCANode ccaNode: candidateCCANodes){
 
             if (NUM_CCA_NODES_ACCEPTED_FOR_MIGRATION >=NUM_PARTITIONS-ONE )  break; 
@@ -243,6 +250,8 @@ public class Driver {
                 //          qxxy               dod       
                 acceptedCCANodes.add(ccaNode);
                 pruneList .addAll( ccaNode.pruneList);
+                                
+                
             }
         }
         if (acceptedCCANodes.size() < NUM_PARTITIONS-ONE) {
@@ -250,16 +259,41 @@ public class Driver {
             exit(ZERO);
         }
         
+
+        
         logger.info ( "leafs left on home partition is " + (RAMP_UP_TO_THIS_MANY_LEAFS-  pruneList.size()));
         //get the incumbent value after ramp up
         double incumbentValueAfterRampup = IS_MAXIMIZATION? Collections.max(frontierCCA.mapValues( new  IncumbentFetcher()).values().collect()) :
                                                             Collections.min(frontierCCA.mapValues( new  IncumbentFetcher()).values().collect());
         
-        //assign one candidate CCA node to each partition other than home 
+        //convert each accepted CCA node into its component leafs, and add them into an active subtree collection
+        List<List<CCANode>> leafList = null;
+        List<List<List<CCANode>>> leafListsCollected = frontierCCA.mapValues( new CCAtoComponentLeafConverter(acceptedCCANodes)).values().collect();
+        for ( List<List<CCANode>> temp : leafListsCollected ) {
+            if (temp.size()> ZERO ) {
+                leafList= temp;
+                break;
+            }
+        }
+        
+        //prepare the frontier CCA for the CCA test
+        //assign one candidate CCA node to each partition other than home . Note that home has the ramped up tree.
         frontierCCA = frontierCCA.mapPartitionsToPair(new CCADistributor (  acceptedCCANodes ,incumbentValueAfterRampup),  true);
         frontierCCA.cache() ;
         
-        //now solve every partition to completion, exchanging cutoffs every 5 minutes.  
+        //prepare the RDDs used for running SBF, LSI, BEF
+        //convert each CCA node list into an active subtree collection, and the source tree also into an active subtree collection
+        JavaPairRDD < Integer, ActiveSubtreeCollection > frontierSBFCollection = 
+                frontierSBF.mapPartitionsToPair(new  TreeToCollectionConverter ( incumbentValueAfterRampup , leafList ));
+        JavaPairRDD < Integer, ActiveSubtreeCollection > frontierLSICollection = 
+                frontierLSI.mapPartitionsToPair(new  TreeToCollectionConverter ( incumbentValueAfterRampup , leafList ));
+        JavaPairRDD < Integer, ActiveSubtreeCollection > frontierBEFCollection = 
+                frontierBEF.mapPartitionsToPair(new  TreeToCollectionConverter ( incumbentValueAfterRampup , leafList ));
+        //test 2 will solve these active subtree collections 
+        
+        
+        
+        //TEST 1 : CCA - solve every partition to completion, with a single CCA node on each partition, exchanging cutoffs every 5 minutes.  
         int iterationCount = ZERO;
         boolean solvedToCompletion = true;
         double incumbent  = incumbentValueAfterRampup;
@@ -267,7 +301,7 @@ public class Driver {
         do {
             iterationCount++;
             
-            logger.info("Starting solution iteration "+ iterationCount);
+            logger.info("Starting CCA solution iteration "+ iterationCount);
             List<SolutionVector> solutionList = frontierCCA.mapPartitionsToPair(new  SubtreeSolver (  pruneList ),  true).values().collect();
             
             solvedToCompletion = true;
@@ -296,7 +330,61 @@ public class Driver {
             
         }while (!solvedToCompletion);
         
-        logger.info(" CCA test completed in iterations = "+iterationCount);
+        frontierCCA.mapValues(new TreeEnder());        
+        logger.info(" CCA test completed in iterations = "+iterationCount + " with incumbent " + incumbent);
+        
+        
+        //
+        //TEST 2 - solve individual leafs instead of CCA nodes using LSI, SBF, BEF        
+        for(NodeSelectionStartegyEnum nodeSelectionStrategy  :NodeSelectionStartegyEnum.values()){
+            
+            iterationCount = ZERO;
+            solvedToCompletion = true;
+            incumbent  = incumbentValueAfterRampup;
+            
+            //use the appropriate RDD
+            JavaPairRDD < Integer, ActiveSubtreeCollection > frontierCollection = frontierSBFCollection;
+            if (nodeSelectionStrategy.equals( NodeSelectionStartegyEnum.LOWEST_SUM_INFEASIBILITY_FIRST)) frontierCollection = frontierLSICollection;
+            if (nodeSelectionStrategy.equals( NodeSelectionStartegyEnum.BEST_ESTIMATE_FIRST)) frontierCollection = frontierBEFCollection;
+            
+            do {
+
+                iterationCount++;
+                logger.info("Starting " + nodeSelectionStrategy + " solution iteration "+ iterationCount);
+                
+                List<SolutionVector> solutionList = frontierCollection .mapPartitionsToPair(new  SubtreeCollectionSolver (  pruneList , nodeSelectionStrategy),  true).values().collect();
+            
+                solvedToCompletion = true;
+                for (SolutionVector soln : solutionList) {
+                    if (!soln.isAlreadySolvedToCompletion) {
+                        solvedToCompletion=false;
+                        break;
+                    }
+                }
+
+                //find the best solution found, update the incumbent, and use it to update the cutoffs
+                boolean cutoffNeedsUpdate = false;
+                for (SolutionVector soln : solutionList) {
+                    if   ( soln.isFeasibleOrOptimal)  {
+                        if (  (!IS_MAXIMIZATION  && incumbent> soln.bestKnownSolution)  || (IS_MAXIMIZATION && incumbent <  soln.bestKnownSolution) ) {     
+                            //bestKnownSolution =              tree.getSolutionVector();
+                            incumbent= soln.bestKnownSolution;    
+                            cutoffNeedsUpdate= true;
+                        }
+                    }
+                }
+
+                if (cutoffNeedsUpdate && !solvedToCompletion){
+                    frontierCollection.mapValues( new CutoffUpdaterForCollections(incumbent)); 
+                }
+
+            }while (!solvedToCompletion);
+            
+            frontierCollection.mapValues(new TreeCollectionEnder());
+            logger.info(nodeSelectionStrategy +" test completed in iterations = "+iterationCount + " with incumbent " + incumbent);
+        }
+
+          
         
     }//end main
     

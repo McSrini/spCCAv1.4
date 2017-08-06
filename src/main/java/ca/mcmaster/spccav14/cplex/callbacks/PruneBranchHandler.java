@@ -51,8 +51,8 @@ public class PruneBranchHandler extends IloCplex.BranchCallback {
     protected void main() throws IloException {
         if (pruneList!=null && pruneList.size()>ZERO){
             if (  pruneList.contains( getNodeId().toString()) ) {
-                pruneList.remove(  getNodeId().toString() );
-                //logger.debug("Pruning migrated node" + getNodeId().toString() + " prine list reamaining size "+pruneList.size()) ;
+                //pruneList.remove(  getNodeId().toString() );
+                logger.debug("Pruning migrated node" + getNodeId().toString() + " prune list reamaining size "+pruneList.size()) ;
                 prune();
             } 
         }

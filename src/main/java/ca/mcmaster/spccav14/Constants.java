@@ -11,6 +11,7 @@ package ca.mcmaster.spccav14;
  */
 public class Constants {
         
+    public static final double EPSILON = 0.0000000001;
     public static final int ZERO = 00;
     public static final double DOUBLE_ZERO = 0.0;
     public static final int ONE = 1;
@@ -18,6 +19,8 @@ public class Constants {
     public static final int THREE = 3;
     public static final int FOUR = 4;
     public static final int SIXTY = 60;
+    public static final int HUNDRED = 100;
+    public static final int THOUSAND = 1000 ; 
     public static final int MILLION = 1000000;
     public static final long PLUS_INFINITY = Long.MAX_VALUE;
     public static final long MINUS_INFINITY = Long.MIN_VALUE;
