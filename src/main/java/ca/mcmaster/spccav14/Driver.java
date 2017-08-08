@@ -7,6 +7,7 @@ package ca.mcmaster.spccav14;
 
 import ca.mcmaster.spccav14.rddFunctions.BooleanToTreeConverter;
 import static ca.mcmaster.spccav14.Constants.*;
+import ca.mcmaster.spccav14.cb.CBInstructionTree;
 import ca.mcmaster.spccav14.cca.CCANode;
 import ca.mcmaster.spccav14.cplex.*;
 import ca.mcmaster.spccav14.cplex.datatypes.NodeAttachment;
@@ -250,7 +251,6 @@ public class Driver {
                 //          qxxy               dod       
                 acceptedCCANodes.add(ccaNode);
                 pruneList .addAll( ccaNode.pruneList);
-                                
                 
             }
         }
@@ -275,6 +275,17 @@ public class Driver {
                 break;
             }
         }
+        
+        //get the CB instructions for each accepted CCA node
+        List<List<CBInstructionTree>> collectedCBTreeLists =   frontierCCA.mapValues( new CCAtoCBConverter(acceptedCCANodes)).values().collect();
+        List<CBInstructionTree> cbTreeList = null;
+        for (List<CBInstructionTree> temp :collectedCBTreeLists ){
+            if (temp.size()> ZERO ) {
+               cbTreeList= temp;
+               break;
+            }
+        }
+        
         
         //prepare the frontier CCA for the CCA test
         //assign one candidate CCA node to each partition other than home . Note that home has the ramped up tree.
@@ -384,7 +395,53 @@ public class Driver {
             logger.info(nodeSelectionStrategy +" test completed in iterations = "+iterationCount + " with incumbent " + incumbent);
         }
 
-          
+        //Test 3 - solve using CB
+        //Similar to CCA, but the first iteration is spent reconstructing the trees using CB
+        //first create the frontier using controlled branching on all partitions except the home partition        
+        frontierCB = frontierCB.mapPartitionsToPair(new CBDistributor ( cbTreeList, acceptedCCANodes, incumbentValueAfterRampup),  true);
+        frontierCB.cache() ;
+        
+        //now solve every partition for 5 minutes just like we did in the other tests
+        iterationCount = ZERO;
+        solvedToCompletion = true;
+        incumbent  = incumbentValueAfterRampup;
+        //kkkisuuyjkhj pnpk  55595666614226 
+        do {
+            iterationCount++;
+            
+            logger.info("Starting CB solution iteration "+ iterationCount);
+            List<SolutionVector> solutionList = frontierCB.mapPartitionsToPair(new  SubtreeSolver (  pruneList ),  true).values().collect();
+            
+            solvedToCompletion = true;
+            for (SolutionVector soln : solutionList) {
+                if (!soln.isAlreadySolvedToCompletion) {
+                    solvedToCompletion=false;
+                    break;
+                }
+            }
+            
+            //find the best solution found, update the incumbent, and use it to update the cutoffs
+            boolean cutoffNeedsUpdate = false;
+            for (SolutionVector soln : solutionList) {
+                if   ( soln.isFeasibleOrOptimal)  {
+                    if (  (!IS_MAXIMIZATION  && incumbent> soln.bestKnownSolution)  || (IS_MAXIMIZATION && incumbent <  soln.bestKnownSolution) ) {     
+                        //bestKnownSolution =              tree.getSolutionVector();
+                        incumbent= soln.bestKnownSolution;    
+                        cutoffNeedsUpdate= true;
+                    }
+                }
+            }
+            
+            if (cutoffNeedsUpdate && !solvedToCompletion){
+                frontierCB.mapValues( new CutoffUpdater(incumbent));
+            }
+            
+        }while (!solvedToCompletion);
+        
+        frontierCCA.mapValues(new TreeEnder());        
+        logger.info(" CCA test completed in iterations = "+iterationCount + " with incumbent " + incumbent);
+       
+        logger.info("All tests completed.");
         
     }//end main
     

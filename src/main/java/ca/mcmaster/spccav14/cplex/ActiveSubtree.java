@@ -6,6 +6,9 @@
 package ca.mcmaster.spccav14.cplex;
 
 import static ca.mcmaster.spccav14.Constants.*;
+import ca.mcmaster.spccav14.cb.CBInstructionGenerator;
+import ca.mcmaster.spccav14.cb.CBInstructionTree;
+import ca.mcmaster.spccav14.cb.ReincarnationMaps;
 import ca.mcmaster.spccav14.cca.*;
 import ca.mcmaster.spccav14.cplex.callbacks.*;
 import ca.mcmaster.spccav14.cplex.datatypes.*;
@@ -58,6 +61,8 @@ public class ActiveSubtree {
     
     //use this object to run CCA algorithms
     private CCAFinder ccaFinder =new CCAFinder();
+    
+    private CBInstructionGenerator cbInstructionGenerator ;
     
     //this IloCplex object, if constructed by merging variable bounds, is differnt from the original MIP by these bounds
     //When extracting a CCA node from this Active Subtree , keep in mind that the CCA node branching instructions should be combined with these instructions
@@ -161,6 +166,36 @@ public class ActiveSubtree {
                         
         logger.debug("simpleSolve completed at "+LocalDateTime.now()) ;
     }  
+    
+    //this method is used when reincarnating a tree in a controlled fashion
+    //similar to solve(), but we use controlled branching instead of CPLEX default branching
+    public    void reincarnate ( Map<String, CCANode> instructionTreeAsMap, String ccaRootNodeID, double cutoff, boolean setCutoff) throws IloException{
+        
+        logger.debug("Reincarnating tree with cca root node id "+ ccaRootNodeID);
+        
+        //reset CCA finder
+        this.ccaFinder.close();
+        
+        //set callbacks 
+        ReincarnationMaps reincarnationMaps=createReincarnationMaps(instructionTreeAsMap,ccaRootNodeID);
+        this.cplex.use( new ReincarnationBranchHandler(instructionTreeAsMap,  reincarnationMaps, this.modelVars));
+        this.cplex.use( new ReincarnationNodeHandler(reincarnationMaps));      
+        
+        if (setCutoff) setCutoffValue(  cutoff);
+        setParams (  -ONE, true);//no time limit
+         
+        cplex.solve();
+        
+        //solve complete - now get the active leafs
+        //restore regular branch handler
+        this.cplex.use(branchHandler);
+        this.cplex.use(leafFetchNodeHandler);  
+        cplex.solve();
+        allActiveLeafs = leafFetchNodeHandler.allLeafs;
+        
+        //initialize the CCA finder
+        ccaFinder .initialize(allActiveLeafs);
+    }
        
     public void setCutoffValue(double cutoff) throws IloException {
         if (!IS_MAXIMIZATION) {
@@ -288,6 +323,40 @@ public class ActiveSubtree {
     public double getBestRemaining_LPValue() throws IloException{
         return this.cplex.getBestObjValue();
         //return this.allActiveLeafs==null? this.lpRelaxValueAfterCCAMerge: this.branchHandler.bestReamining_LPValue;
+    }
+    
+    //if wanted leafs are not specified, every migratable leaf under this CCA is assumed to be wanted
+    public CBInstructionTree getCBInstructionTree (CCANode ccaNode ) {
+        List<String> wantedLeafs = new ArrayList<String> ();
+        for (NodeAttachment node :  this.allActiveLeafs){
+            if (ccaNode.pruneList.contains(node.nodeID) && node.isMigrateable) wantedLeafs.add(node.nodeID);
+        }
+        cbInstructionGenerator = new CBInstructionGenerator( ccaNode,     allActiveLeafs,   wantedLeafs) ;
+        return cbInstructionGenerator.generateInstructions( );
+    }
+        
+    public CBInstructionTree getCBInstructionTree (CCANode ccaNode, List<String> wantedLeafs) {
+        
+        cbInstructionGenerator = new CBInstructionGenerator( ccaNode,     allActiveLeafs,   wantedLeafs) ;
+        return cbInstructionGenerator.generateInstructions( );
+    }
+        
+    private  ReincarnationMaps createReincarnationMaps (Map<String, CCANode> instructionTreeAsMap, String ccaRootNodeID){
+        ReincarnationMaps   maps = new ReincarnationMaps ();
+                
+        for (String key : instructionTreeAsMap.keySet()){
+            if (instructionTreeAsMap.get(key).leftChildNodeID!=null){
+                //  this  needs to be branched upon , using the branching instructions in the CCA node
+                maps.oldToNew_NodeId_Map.put( key,null  );
+            }
+        }
+        
+        //both maps can start with original MIP which is always node ID -1
+        //but right now we are starting from the root CCA
+        maps.oldToNew_NodeId_Map.put( ccaRootNodeID ,MINUS_ONE_STRING  );
+        maps.newToOld_NodeId_Map.put( MINUS_ONE_STRING,ccaRootNodeID  );
+        
+        return maps;
     }
     
 }
